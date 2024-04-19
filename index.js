@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,33 +15,30 @@ app.get('/', (req, res) => {
 // Socket.io connection
 io.on('connection', (socket) => {
   console.log('A user connected');
-});
+  
+  // Start raspivid and stream video
+  const raspividCmd = 'raspivid -t 0 -hf -vf -fps 30 -w 640 -h 480 -o -';
+  const raspividProcess = spawn(raspividCmd, {
+    shell: true
+  });
 
-// Execute raspivid to capture video and stream
-const raspividCmd = 'raspivid -t 0 -hf -vf -fps 30 -w 640 -h 480 -o -';
-const ffmpegCmd = 'ffmpeg -i - -vcodec copy -an -f flv rtmp://localhost/live/stream';
+  raspividProcess.stdout.on('data', (data) => {
+    socket.emit('video', data);
+  });
 
-const raspividProcess = exec(raspividCmd, (err, stdout, stderr) => {
-  if (err) {
-    console.error('raspivid error:', err);
-    return;
-  }
-  console.log('raspivid closed');
-});
+  raspividProcess.stderr.on('data', (data) => {
+    console.error(`raspivid stderr: ${data}`);
+  });
 
-const ffmpegProcess = exec(ffmpegCmd, (err, stdout, stderr) => {
-  if (err) {
-    console.error('ffmpeg error:', err);
-    return;
-  }
-  console.log('ffmpeg closed');
-});
+  raspividProcess.on('close', (code) => {
+    console.log(`raspivid process exited with code ${code}`);
+  });
 
-// Handle exit gracefully
-process.on('SIGINT', () => {
-  raspividProcess.kill();
-  ffmpegProcess.kill();
-  process.exit();
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('A user disconnected');
+    raspividProcess.kill();
+  });
 });
 
 server.listen(5000, () => {
